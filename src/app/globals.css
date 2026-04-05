@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --background: oklch(0.982 0.008 95.32);
+  --foreground: oklch(0.238 0.021 82.75);
+  --card: oklch(0.993 0.005 95.1);
+  --card-foreground: oklch(0.238 0.021 82.75);
+  --popover: oklch(0.993 0.005 95.1);
+  --popover-foreground: oklch(0.238 0.021 82.75);
+  --primary: oklch(0.515 0.119 156.84);
+  --primary-foreground: oklch(0.987 0.013 98.04);
+  --secondary: oklch(0.922 0.014 88.6);
+  --secondary-foreground: oklch(0.297 0.023 84.63);
+  --muted: oklch(0.943 0.01 95.49);
+  --muted-foreground: oklch(0.498 0.019 82.37);
+  --accent: oklch(0.88 0.05 151.27);
+  --accent-foreground: oklch(0.238 0.021 82.75);
+  --border: oklch(0.873 0.015 90.23);
+  --input: oklch(0.873 0.015 90.23);
+  --ring: oklch(0.515 0.119 156.84);
+  --radius: 1rem;
+}
+
+* {
+  @apply border-border;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  @apply min-h-screen bg-background text-foreground antialiased;
+  background-image:
+    radial-gradient(circle at top left, color-mix(in oklab, var(--accent) 35%, transparent), transparent 34%),
+    radial-gradient(circle at 85% 12%, color-mix(in oklab, var(--primary) 22%, transparent), transparent 26%),
+    linear-gradient(180deg, color-mix(in oklab, var(--background) 80%, white) 0%, var(--background) 100%);
+}
