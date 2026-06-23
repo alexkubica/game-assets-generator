@@ -26,13 +26,38 @@ type Props = {
 };
 
 export function JobInspectorContent({ job, onOpenMain, onFork, onArchive }: Props) {
+  const displayTitle = job.title.trim() || job.prompt;
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-2">
         <Badge>{formatStatus(job.status)}</Badge>
-        <Badge variant="secondary">{job.frames.length} frames</Badge>
+        <Badge variant="secondary">{job.frames.length} total frames</Badge>
         <Badge variant="secondary">{job.selectedFrameNumbers.length} selected</Badge>
         {job.derivedSpriteIds.length > 0 ? <Badge variant="secondary">{job.derivedSpriteIds.length} sprites</Badge> : null}
+      </div>
+
+      <div className="grid gap-2 rounded-2xl border border-border/70 bg-card/60 p-4">
+        <div className="text-sm font-medium">History</div>
+        <p className="text-sm text-muted-foreground">{displayTitle}</p>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-border/70 bg-card/60">
+        {job.videoAssetPath ? (
+          <video
+            className="aspect-video h-full w-full object-cover"
+            src={job.videoAssetPath}
+            autoPlay
+            loop
+            muted
+            playsInline
+            controls
+          />
+        ) : (
+          <div className="flex aspect-video items-center justify-center px-4 text-center text-sm text-muted-foreground">
+            Video preview will appear here when the run finishes.
+          </div>
+        )}
       </div>
 
       <div className="grid gap-2 rounded-2xl border border-border/70 bg-card/60 p-4">

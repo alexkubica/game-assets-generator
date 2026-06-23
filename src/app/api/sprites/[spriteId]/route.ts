@@ -36,6 +36,7 @@ export async function PATCH(request: Request, context: Context) {
       cellWidth: parsed.data.cellWidth ?? current.cellWidth,
       cellHeight: parsed.data.cellHeight ?? current.cellHeight,
       frameCount: parsed.data.frameCount ?? current.frameCount,
+      selectedFrameNumbers: parsed.data.selectedFrameNumbers ?? current.selectedFrameNumbers,
       playbackFps: parsed.data.playbackFps ?? current.playbackFps,
       chromaKeyColor: parsed.data.chromaKeyColor ?? current.chromaKeyColor,
       chromaKeyTolerance: parsed.data.chromaKeyTolerance ?? current.chromaKeyTolerance,

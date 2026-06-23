@@ -38,6 +38,23 @@ function getFrameCount(imageWidth: number, imageHeight: number, cellWidth: numbe
   return Math.floor(imageWidth / cellWidth) * Math.floor(imageHeight / cellHeight);
 }
 
+function buildSequentialFrameNumbers(frameCount: number) {
+  return Array.from({ length: Math.max(frameCount, 0) }, (_, index) => index + 1);
+}
+
+function normalizeSelectedFrameNumbers(selectedFrameNumbers: number[] | null | undefined, maxFrameCount: number) {
+  if (selectedFrameNumbers === undefined || selectedFrameNumbers === null) {
+    return buildSequentialFrameNumbers(maxFrameCount);
+  }
+
+  const normalized = (selectedFrameNumbers ?? [])
+    .filter((value) => Number.isInteger(value) && value >= 1 && value <= maxFrameCount)
+    .sort((left, right) => left - right)
+    .filter((value, index, values) => index === 0 || values[index - 1] !== value);
+
+  return normalized;
+}
+
 function normalizeSpriteAsset(sprite: SpriteAsset) {
   const cellWidth = sprite.cellWidth ?? DEFAULT_SPRITE_CELL_WIDTH;
   const cellHeight = sprite.cellHeight ?? DEFAULT_SPRITE_CELL_HEIGHT;
@@ -50,7 +67,8 @@ function normalizeSpriteAsset(sprite: SpriteAsset) {
     cellWidth,
     cellHeight,
     playbackFps: sprite.playbackFps ?? DEFAULT_SPRITE_PLAYBACK_FPS,
-    frameCount: Math.min(sprite.frameCount ?? maxFrameCount, maxFrameCount),
+    selectedFrameNumbers: normalizeSelectedFrameNumbers(sprite.selectedFrameNumbers, maxFrameCount),
+    frameCount: normalizeSelectedFrameNumbers(sprite.selectedFrameNumbers, maxFrameCount).length,
     chromaKeyColor: sprite.chromaKeyColor ?? null,
     chromaKeyTolerance: sprite.chromaKeyTolerance ?? 32,
     gifPath: sprite.gifPath ?? null,
@@ -79,10 +97,9 @@ export async function updateSpriteManifest(
   const current = await readSpriteManifest(spriteId);
   const next = await update(current);
   next.updatedAt = new Date().toISOString();
-  next.frameCount = Math.min(
-    next.frameCount,
-    getFrameCount(next.imageWidth, next.imageHeight, next.cellWidth, next.cellHeight),
-  );
+  const maxFrameCount = getFrameCount(next.imageWidth, next.imageHeight, next.cellWidth, next.cellHeight);
+  next.selectedFrameNumbers = normalizeSelectedFrameNumbers(next.selectedFrameNumbers, maxFrameCount);
+  next.frameCount = next.selectedFrameNumbers.length;
   next.chromaKeyTolerance = Math.max(0, Math.min(next.chromaKeyTolerance, 255));
   await writeSpriteManifest(next);
   return next;
@@ -151,6 +168,7 @@ export async function upsertGeneratedSprite(job: JobManifest) {
     cellHeight: job.spritesheet.frameHeight,
     playbackFps: job.previewFps,
     frameCount: job.spritesheet.frameCount,
+    selectedFrameNumbers: buildSequentialFrameNumbers(job.spritesheet.frameCount),
     chromaKeyColor: null,
     chromaKeyTolerance: 32,
     gifPath: null,
@@ -204,6 +222,7 @@ export async function createUploadedSprite(args: {
     cellHeight,
     playbackFps: DEFAULT_SPRITE_PLAYBACK_FPS,
     frameCount: getFrameCount(imageWidth, imageHeight, cellWidth, cellHeight),
+    selectedFrameNumbers: buildSequentialFrameNumbers(getFrameCount(imageWidth, imageHeight, cellWidth, cellHeight)),
     chromaKeyColor: null,
     chromaKeyTolerance: 32,
     gifPath: null,
@@ -331,7 +350,8 @@ export async function exportSpriteGif(spriteId: string) {
   const frameDelay = Math.max(Math.round(1000 / Math.max(sprite.playbackFps, 1)), 20);
   const gif = GIFEncoder();
 
-  for (let frameIndex = 0; frameIndex < sprite.frameCount; frameIndex += 1) {
+  for (const selectedFrameNumber of sprite.selectedFrameNumbers) {
+    const frameIndex = selectedFrameNumber - 1;
     const left = (frameIndex * sprite.cellWidth) % sprite.imageWidth;
     const top = Math.floor((frameIndex * sprite.cellWidth) / sprite.imageWidth) * sprite.cellHeight;
 

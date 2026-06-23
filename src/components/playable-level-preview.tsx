@@ -12,6 +12,7 @@ export type PlayableSpriteStateConfig = {
   cellHeight: number;
   fps: number;
   frameCount: number;
+  selectedFrameNumbers?: number[];
   scale: number;
   sourceOrientation: SpriteOrientation;
   chromaKeyColor: string | null;
@@ -380,15 +381,21 @@ export function PlayableLevelPreview({ spritesByState }: Props) {
             }
 
             for (const sprite of Object.values(stateSprites)) {
-              const frameTotal = Math.max(sprite.frameCount, 1);
+              const frames =
+                sprite.selectedFrameNumbers && sprite.selectedFrameNumbers.length > 0
+                  ? sprite.selectedFrameNumbers.map((frameNumber) => ({
+                      key: sprite.textureKey,
+                      frame: Math.max(frameNumber - 1, 0),
+                    }))
+                  : Array.from({ length: Math.max(sprite.frameCount, 1) }, (_, index) => ({
+                      key: sprite.textureKey,
+                      frame: index,
+                    }));
 
               if (!this.anims.exists(sprite.animationKey)) {
                 this.anims.create({
                   key: sprite.animationKey,
-                  frames: this.anims.generateFrameNumbers(sprite.textureKey, {
-                    start: 0,
-                    end: Math.max(frameTotal - 1, 0),
-                  }),
+                  frames,
                   frameRate: sprite.fps,
                   repeat: -1,
                 });

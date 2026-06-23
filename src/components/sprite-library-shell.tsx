@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { Check, Download, Import, LoaderCircle, Pipette, Upload } from "lucide-react";
+import { Check, Download, Import, LoaderCircle, Pipette, Play, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { AssetInspectorDrawer } from "@/components/asset-inspector-drawer";
 import { EntityActionMenu } from "@/components/entity-action-menu";
@@ -24,6 +24,13 @@ import {
 } from "@/lib/config";
 import type { JobManifest, SpriteAsset } from "@/lib/types";
 
+type SpriteFrameTile = {
+  index: number;
+  number: number;
+  column: number;
+  row: number;
+};
+
 const timestampFormatter = new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium",
   timeStyle: "short",
@@ -32,6 +39,36 @@ const timestampFormatter = new Intl.DateTimeFormat("en-US", {
 
 function formatTimestamp(value: string) {
   return `${timestampFormatter.format(new Date(value))} UTC`;
+}
+
+function getSpriteFrameTiles(
+  imageWidth: number,
+  imageHeight: number,
+  cellWidth: number,
+  cellHeight: number,
+  totalFrames: number,
+) {
+  if (
+    cellWidth <= 0 ||
+    cellHeight <= 0 ||
+    imageWidth < cellWidth ||
+    imageHeight < cellHeight ||
+    imageWidth % cellWidth !== 0 ||
+    imageHeight % cellHeight !== 0
+  ) {
+    return [] satisfies SpriteFrameTile[];
+  }
+
+  const columns = Math.floor(imageWidth / cellWidth);
+  const rows = Math.floor(imageHeight / cellHeight);
+  const frameTotal = Math.min(totalFrames, columns * rows);
+
+  return Array.from({ length: frameTotal }, (_, index) => ({
+    index,
+    number: index + 1,
+    column: index % columns,
+    row: Math.floor(index / columns),
+  }));
 }
 
 async function detectMostCommonEdgeColor(imageAssetPath: string) {
@@ -97,12 +134,18 @@ async function detectMostCommonEdgeColor(imageAssetPath: string) {
 export function SpriteLibraryShell({
   initialSprites,
   generatedJobs,
+  initialActiveSpriteId,
 }: {
   initialSprites: SpriteAsset[];
   generatedJobs: JobManifest[];
+  initialActiveSpriteId?: string | null;
 }) {
   const [sprites, setSprites] = useState(initialSprites);
-  const [activeSpriteId, setActiveSpriteId] = useState(initialSprites[0]?.spriteId ?? null);
+  const [activeSpriteId, setActiveSpriteId] = useState(
+    initialSprites.some((sprite) => sprite.spriteId === initialActiveSpriteId)
+      ? initialActiveSpriteId ?? null
+      : initialSprites[0]?.spriteId ?? null,
+  );
   const [inspectedSpriteId, setInspectedSpriteId] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -122,10 +165,13 @@ export function SpriteLibraryShell({
   const [cellWidth, setCellWidth] = useState(activeSprite?.cellWidth ?? DEFAULT_SPRITE_CELL_WIDTH);
   const [cellHeight, setCellHeight] = useState(activeSprite?.cellHeight ?? DEFAULT_SPRITE_CELL_HEIGHT);
   const [frameCount, setFrameCount] = useState(activeSprite?.frameCount ?? 1);
+  const [selectedFrameNumbers, setSelectedFrameNumbers] = useState<number[]>(activeSprite?.selectedFrameNumbers ?? [1]);
   const [playbackFps, setPlaybackFps] = useState(activeSprite?.playbackFps ?? DEFAULT_SPRITE_PLAYBACK_FPS);
   const [chromaKeyColor, setChromaKeyColor] = useState(activeSprite?.chromaKeyColor ?? "#00ff00");
   const [chromaKeyEnabled, setChromaKeyEnabled] = useState(Boolean(activeSprite?.chromaKeyColor));
   const [chromaKeyTolerance, setChromaKeyTolerance] = useState(activeSprite?.chromaKeyTolerance ?? 32);
+  const [frameSkipCount, setFrameSkipCount] = useState(0);
+  const [frameSkipStart, setFrameSkipStart] = useState(0);
 
   const frameGrid = useMemo(() => {
     if (!activeSprite) return null;
@@ -152,8 +198,21 @@ export function SpriteLibraryShell({
       return 0;
     }
 
-    return Math.min(frameCount, frameGrid.frameCount);
-  }, [frameCount, activeSprite, frameGrid]);
+    return selectedFrameNumbers.filter((frameNumber) => frameNumber >= 1 && frameNumber <= frameGrid.frameCount).length;
+  }, [activeSprite, frameGrid, selectedFrameNumbers]);
+  const frameTiles = useMemo(() => {
+    if (!activeSprite || !frameGrid?.isValid) {
+      return [];
+    }
+
+    return getSpriteFrameTiles(
+      activeSprite.imageWidth,
+      activeSprite.imageHeight,
+      cellWidth,
+      cellHeight,
+      frameGrid.frameCount,
+    );
+  }, [activeSprite, cellHeight, cellWidth, frameGrid]);
 
   const generatedLibraryMap = useMemo(
     () =>
@@ -252,7 +311,8 @@ export function SpriteLibraryShell({
           title: activeTitle,
           cellWidth,
           cellHeight,
-          frameCount,
+          frameCount: selectedFrameNumbers.length,
+          selectedFrameNumbers,
           playbackFps,
           chromaKeyColor: chromaKeyEnabled ? chromaKeyColor : null,
           chromaKeyTolerance,
@@ -341,7 +401,8 @@ export function SpriteLibraryShell({
           title: activeTitle,
           cellWidth,
           cellHeight,
-          frameCount,
+          frameCount: selectedFrameNumbers.length,
+          selectedFrameNumbers,
           playbackFps,
           chromaKeyColor: chromaKeyEnabled ? chromaKeyColor : null,
           chromaKeyTolerance,
@@ -456,17 +517,77 @@ export function SpriteLibraryShell({
     }
   }
 
+  function applyFrameSkipSelection() {
+    if (!frameGrid?.isValid || frameGrid.frameCount < 1) {
+      return;
+    }
+
+    const normalizedSkip = Math.max(0, Math.floor(frameSkipCount));
+    const normalizedStart = Math.max(0, Math.floor(frameSkipStart));
+    const step = normalizedSkip + 1;
+    const nextSelected = frameTiles
+      .filter((frame) => frame.index >= normalizedStart && (frame.index - normalizedStart) % step === 0)
+      .map((frame) => frame.number);
+
+    setSelectedFrameNumbers(nextSelected);
+  }
+
+  function toggleFrameNumber(frameNumber: number) {
+    setSelectedFrameNumbers((current) => {
+      if (current.includes(frameNumber)) {
+        return current.filter((value) => value !== frameNumber);
+      }
+
+      return [...current, frameNumber].sort((left, right) => left - right);
+    });
+  }
+
+  function selectAllFrames() {
+    if (!frameGrid?.isValid) {
+      return;
+    }
+
+    setSelectedFrameNumbers(Array.from({ length: frameGrid.frameCount }, (_, index) => index + 1));
+  }
+
+  function unselectAllFrames() {
+    setSelectedFrameNumbers([]);
+  }
+
+  function resetFrameSkipInputs() {
+    setFrameSkipCount(0);
+    setFrameSkipStart(0);
+  }
+
   useEffect(() => {
     if (!activeSprite) return;
     setActiveTitle(activeSprite.title);
     setCellWidth(activeSprite.cellWidth);
     setCellHeight(activeSprite.cellHeight);
     setFrameCount(activeSprite.frameCount);
+    setSelectedFrameNumbers(activeSprite.selectedFrameNumbers);
     setPlaybackFps(activeSprite.playbackFps);
     setChromaKeyEnabled(Boolean(activeSprite.chromaKeyColor));
     setChromaKeyColor(activeSprite.chromaKeyColor ?? "#00ff00");
     setChromaKeyTolerance(activeSprite.chromaKeyTolerance);
   }, [activeSprite]);
+
+  useEffect(() => {
+    setFrameCount(selectedFrameNumbers.length);
+  }, [selectedFrameNumbers]);
+
+  useEffect(() => {
+    if (!frameGrid?.isValid) {
+      return;
+    }
+
+    setSelectedFrameNumbers((current) =>
+      current
+        .filter((frameNumber) => frameNumber >= 1 && frameNumber <= frameGrid.frameCount)
+        .sort((left, right) => left - right)
+        .filter((frameNumber, index, values) => index === 0 || values[index - 1] !== frameNumber),
+    );
+  }, [frameGrid]);
 
   return (
     <main className="flex min-h-screen flex-col gap-6">
@@ -520,7 +641,7 @@ export function SpriteLibraryShell({
         }
       />
 
-      <section className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
+      <section className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
         <Card className="overflow-hidden">
           <CardHeader className="gap-4 border-b border-border/60 bg-card/60">
             <Badge className="w-fit">Add To Library</Badge>
@@ -588,370 +709,535 @@ export function SpriteLibraryShell({
 
         <Card>
           <CardHeader>
-            <CardTitle>Import From Generated Runs</CardTitle>
-            <CardDescription>
-              Import exported spritesheets from prior generation jobs into the library. Imported items then behave like any other sprite asset.
-            </CardDescription>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <CardTitle>Sprite Browser</CardTitle>
+                <CardDescription>
+                  Saved sprites and generated runs live together here. Import a run directly or reopen a saved sprite for editing.
+                </CardDescription>
+              </div>
+              <Badge variant="secondary">{filteredSprites.length} saved sprites</Badge>
+            </div>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="h-[280px] pr-3 md:h-[340px]">
-              <div className="grid gap-3 sm:grid-cols-2">
-                {generatedJobs.length === 0 ? (
-                  <div className="rounded-3xl border border-dashed border-border p-6 text-sm text-muted-foreground">
-                    Export a spritesheet from the generator page to make it available here.
-                  </div>
-                ) : null}
+            <ScrollArea className="h-[520px] pr-3">
+              <div className="grid gap-6">
+                <div className="grid gap-3">
+                  {filteredSprites.length === 0 ? (
+                    <div className="rounded-3xl border border-dashed border-border p-6 text-sm text-muted-foreground">
+                      No sprites match the current filters. Change the search/filter settings, import a generated run, or upload a new sheet.
+                    </div>
+                  ) : null}
 
-                {generatedJobs.map((job) => {
-                  const existingSprite = generatedLibraryMap.get(job.jobId) ?? null;
-
-                  return (
+                  {filteredSprites.map((sprite) => (
                     <div
-                      key={job.jobId}
-                      className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/70"
+                      key={sprite.spriteId}
+                      className={`rounded-3xl border p-4 text-left transition ${
+                        activeSpriteId === sprite.spriteId
+                          ? "border-primary bg-primary/8"
+                          : "border-border/70 bg-background/60 hover:bg-secondary/60"
+                      }`}
                     >
-                      <div className="relative aspect-square">
-                        <Image
-                          src={job.spritesheet!.assetPath}
-                          alt={`Generated sprite ${job.jobId}`}
-                          fill
-                          unoptimized
-                          className="object-contain"
-                        />
-                      </div>
-                      <div className="space-y-3 p-4">
-                        <div className="space-y-1">
-                          <div className="text-sm font-medium">{job.title}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {job.spritesheet!.frameCount} frames • {job.spritesheet!.columns}x{job.spritesheet!.rows}
+                      <div className="flex items-start gap-4">
+                        <div className="relative aspect-square w-24 shrink-0 overflow-hidden rounded-[1.25rem] border border-border/70 bg-secondary/40">
+                          <Image
+                            src={sprite.imageAssetPath}
+                            alt={sprite.title}
+                            fill
+                            unoptimized
+                            className="object-contain"
+                          />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-3">
+                            <button type="button" onClick={() => setActiveSpriteId(sprite.spriteId)} className="min-w-0 flex-1 text-left">
+                              <span className="space-y-1">
+                                <span className="block font-medium">{sprite.title}</span>
+                                <span className="block text-xs text-muted-foreground">
+                                  {sprite.sourceType === "generated" ? "Generated" : "Uploaded"} •{" "}
+                                  {formatTimestamp(sprite.createdAt)}
+                                </span>
+                                <span className="mt-1 block text-xs text-muted-foreground">
+                                  {sprite.frameCount} frames • {sprite.usageCount} uses
+                                  {sprite.originalJobId ? " • linked to generation run" : ""}
+                                </span>
+                              </span>
+                            </button>
+                            <div className="flex items-start gap-2">
+                              <span
+                                className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                                  activeSpriteId === sprite.spriteId
+                                    ? "border-transparent bg-primary/15 text-primary"
+                                    : "border-transparent bg-secondary text-secondary-foreground"
+                                }`}
+                              >
+                                {sprite.playbackFps} FPS
+                              </span>
+                              <EntityActionMenu
+                                entityLabel={`Sprite ${sprite.title}`}
+                                onOpen={() => setActiveSpriteId(sprite.spriteId)}
+                                onRename={() => void handleRenameSprite(sprite)}
+                                onFork={() => void handleForkSprite(sprite)}
+                                onArchive={() => void handleArchiveSprite(sprite)}
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Open inspector for ${sprite.title}`}
+                                onClick={() => setInspectedSpriteId(sprite.spriteId)}
+                              >
+                                <Download className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </div>
                         </div>
-                        {existingSprite ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="w-full"
-                            onClick={() => setActiveSpriteId(existingSprite.spriteId)}
-                          >
-                            <Check className="h-4 w-4" />
-                            Open in library
-                          </Button>
-                        ) : (
-                          <Button
-                            type="button"
-                            className="w-full"
-                            onClick={() => void handleImportGenerated(job.jobId)}
-                            disabled={isImportingJobId === job.jobId}
-                          >
-                            {isImportingJobId === job.jobId ? (
-                              <LoaderCircle className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Import className="h-4 w-4" />
-                            )}
-                            Add to sprite library
-                          </Button>
-                        )}
                       </div>
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
+
+                <div className="grid gap-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium">Generated Runs Ready To Import</div>
+                      <div className="text-xs text-muted-foreground">
+                        Video previews stay visible here so you can decide what belongs in the library.
+                      </div>
+                    </div>
+                    <Badge variant="secondary">{generatedJobs.length} runs</Badge>
+                  </div>
+
+                  {generatedJobs.length === 0 ? (
+                    <div className="rounded-3xl border border-dashed border-border p-6 text-sm text-muted-foreground">
+                      Finish a generation run to make it available here.
+                    </div>
+                  ) : null}
+
+                  {generatedJobs.map((job) => {
+                    const existingSprite = generatedLibraryMap.get(job.jobId) ?? null;
+
+                    return (
+                      <div
+                        key={job.jobId}
+                        className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/70"
+                      >
+                        <div className="grid gap-4 p-4 md:grid-cols-[220px_minmax(0,1fr)]">
+                          <div className="overflow-hidden rounded-[1.25rem] border border-border/70 bg-secondary/40">
+                            {job.videoAssetPath ? (
+                              <video
+                                className="aspect-video h-full w-full object-cover"
+                                src={job.videoAssetPath}
+                                controls
+                                loop
+                                muted
+                                playsInline
+                              />
+                            ) : (
+                              <div className="flex aspect-video h-full items-center justify-center text-xs text-muted-foreground">
+                                <Play className="h-4 w-4" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-3">
+                            <div className="space-y-1">
+                              <div className="text-sm font-medium">{job.title}</div>
+                              <div className="text-xs text-muted-foreground">{formatTimestamp(job.createdAt)}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {job.frames.length} frames • {job.selectedFrameNumbers.length} selected • {job.previewFps} FPS
+                              </div>
+                              {job.spritesheet ? (
+                                <div className="text-xs text-muted-foreground">
+                                  {job.spritesheet.frameCount} exported • {job.spritesheet.columns}x{job.spritesheet.rows}
+                                </div>
+                              ) : (
+                                <div className="text-xs text-muted-foreground">
+                                  No spritesheet yet. Import will generate one first.
+                                </div>
+                              )}
+                            </div>
+                            {existingSprite ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="w-full sm:w-fit"
+                                onClick={() => setActiveSpriteId(existingSprite.spriteId)}
+                              >
+                                <Check className="h-4 w-4" />
+                                Open in library
+                              </Button>
+                            ) : (
+                              <Button
+                                type="button"
+                                className="w-full sm:w-fit"
+                                onClick={() => void handleImportGenerated(job.jobId)}
+                                disabled={isImportingJobId === job.jobId}
+                              >
+                                {isImportingJobId === job.jobId ? (
+                                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Import className="h-4 w-4" />
+                                )}
+                                Import as sprite
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </ScrollArea>
           </CardContent>
         </Card>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Sprite Browser</CardTitle>
-            <CardDescription>
-              Generated exports and manual uploads are persisted under <code>data/sprites</code> and managed through one filtered browser.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-[280px] pr-3 md:h-[340px]">
-              <div className="grid gap-3">
-                {filteredSprites.length === 0 ? (
-                  <div className="rounded-3xl border border-dashed border-border p-6 text-sm text-muted-foreground">
-                    No sprites match the current filters. Change the search/filter settings, import a generated run, or upload a new sheet.
-                  </div>
-                ) : null}
-
-                {filteredSprites.map((sprite) => (
-                  <div
-                    key={sprite.spriteId}
-                    className={`rounded-3xl border p-4 text-left transition ${
-                      activeSpriteId === sprite.spriteId
-                        ? "border-primary bg-primary/8"
-                        : "border-border/70 bg-background/60 hover:bg-secondary/60"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <button type="button" onClick={() => setActiveSpriteId(sprite.spriteId)} className="min-w-0 flex-1 text-left">
-                        <span className="space-y-1">
-                          <span className="block font-medium">{sprite.title}</span>
-                          <span className="block text-xs text-muted-foreground">
-                            {sprite.sourceType === "generated" ? "Generated" : "Uploaded"} •{" "}
-                            {formatTimestamp(sprite.createdAt)}
-                          </span>
-                          <span className="mt-1 block text-xs text-muted-foreground">
-                            {sprite.usageCount} uses
-                            {sprite.originalJobId ? " • linked to generation run" : ""}
-                          </span>
-                        </span>
-                      </button>
-                      <div className="flex items-start gap-2">
-                        <span
-                          className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                            activeSpriteId === sprite.spriteId
-                              ? "border-transparent bg-primary/15 text-primary"
-                              : "border-transparent bg-secondary text-secondary-foreground"
-                          }`}
-                        >
-                          {sprite.frameCount} frames
-                        </span>
-                        <EntityActionMenu
-                          entityLabel={`Sprite ${sprite.title}`}
-                          onOpen={() => setActiveSpriteId(sprite.spriteId)}
-                          onRename={() => void handleRenameSprite(sprite)}
-                          onFork={() => void handleForkSprite(sprite)}
-                          onArchive={() => void handleArchiveSprite(sprite)}
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`Open inspector for ${sprite.title}`}
-                          onClick={() => setInspectedSpriteId(sprite.spriteId)}
-                        >
-                          <Download className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
-          </CardContent>
-        </Card>
+      <section className="grid gap-6">
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <div>
                 <CardTitle>Sprite detail</CardTitle>
-                <CardDescription>Adjust per-sprite playback slicing before previewing the animation.</CardDescription>
+                <CardDescription>Adjust per-sprite slicing while keeping the live animation preview visible.</CardDescription>
               </div>
               {activeSprite ? (
-                <Button type="button" variant="outline" size="sm" onClick={() => setInspectedSpriteId(activeSprite.spriteId)}>
-                  Open inspector
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <a
+                    href={`/tester?sprite=${encodeURIComponent(activeSprite.spriteId)}`}
+                    className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium transition hover:bg-secondary"
+                  >
+                    Test in level
+                  </a>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setInspectedSpriteId(activeSprite.spriteId)}>
+                    Open inspector
+                  </Button>
+                </div>
               ) : null}
             </div>
           </CardHeader>
-          <CardContent className="space-y-5">
+          <CardContent>
             {!activeSprite ? (
               <div className="rounded-3xl border border-dashed border-border p-10 text-center text-muted-foreground">
                 Choose a sprite sheet to inspect it.
               </div>
             ) : (
-              <>
-                <div className="relative aspect-square overflow-hidden rounded-3xl border border-border/70 bg-secondary/50">
-                  <Image
-                    src={activeSprite.imageAssetPath}
-                    alt={activeSprite.title}
-                    fill
-                    unoptimized
-                    className="object-contain"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="active-sprite-title">Title</Label>
-                  <Input
-                    id="active-sprite-title"
-                    value={activeTitle}
-                    onChange={(event) => setActiveTitle(event.target.value)}
-                    placeholder="Sprite title"
-                  />
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2">
-                    <Label htmlFor="cell-width">Cell width</Label>
-                    <Input
-                      id="cell-width"
-                      type="number"
-                      min={1}
-                      value={cellWidth}
-                      onChange={(event) => setCellWidth(Number(event.target.value) || 1)}
+              <div className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(340px,0.92fr)]">
+                <div className="space-y-5">
+                  <div className="relative aspect-square overflow-hidden rounded-3xl border border-border/70 bg-secondary/50">
+                    <Image
+                      src={activeSprite.imageAssetPath}
+                      alt={activeSprite.title}
+                      fill
+                      unoptimized
+                      className="object-contain"
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="cell-height">Cell height</Label>
+                    <Label htmlFor="active-sprite-title">Title</Label>
                     <Input
-                      id="cell-height"
+                      id="active-sprite-title"
+                      value={activeTitle}
+                      onChange={(event) => setActiveTitle(event.target.value)}
+                      placeholder="Sprite title"
+                    />
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="grid gap-2">
+                      <Label htmlFor="cell-width">Cell width</Label>
+                      <Input
+                        id="cell-width"
+                        type="number"
+                        min={1}
+                        value={cellWidth}
+                        onChange={(event) => setCellWidth(Number(event.target.value) || 1)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="cell-height">Cell height</Label>
+                      <Input
+                        id="cell-height"
+                        type="number"
+                        min={1}
+                        value={cellHeight}
+                        onChange={(event) => setCellHeight(Number(event.target.value) || 1)}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="frame-count">Frame count</Label>
+                    <Input
+                      id="frame-count"
                       type="number"
-                      min={1}
-                      value={cellHeight}
-                      onChange={(event) => setCellHeight(Number(event.target.value) || 1)}
+                      min={0}
+                      max={frameGrid?.frameCount ?? undefined}
+                      value={frameCount}
+                      onChange={(event) => {
+                        const nextValue = Math.max(0, Number(event.target.value) || 0);
+                        setFrameCount(nextValue);
+                        setSelectedFrameNumbers(Array.from({ length: nextValue }, (_, index) => index + 1));
+                      }}
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Max available from the current grid: {frameGrid?.frameCount ?? 0} frames.
+                    </p>
                   </div>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="frame-count">Frame count</Label>
-                  <Input
-                    id="frame-count"
-                    type="number"
-                    min={1}
-                    max={frameGrid?.frameCount ?? undefined}
-                    value={frameCount}
-                    onChange={(event) => setFrameCount(Number(event.target.value) || 1)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Max available from the current grid: {frameGrid?.frameCount ?? 0} frames.
-                  </p>
-                </div>
-                <div className="grid gap-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <Label htmlFor="sprite-fps">Playback FPS</Label>
-                    <div className="rounded-full bg-secondary px-3 py-1 text-sm font-medium">
-                      {playbackFps} FPS
-                    </div>
-                  </div>
-                  <Slider
-                    id="sprite-fps"
-                    min={1}
-                    max={60}
-                    step={1}
-                    value={[playbackFps]}
-                    onValueChange={(value) => setPlaybackFps(value[0] ?? DEFAULT_SPRITE_PLAYBACK_FPS)}
-                  />
-                </div>
-                <div className="grid gap-4 rounded-3xl border border-border/70 bg-background/70 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-medium">Chroma key</div>
-                      <div className="text-xs text-muted-foreground">
-                        Remove a picked color to transparency. Threshold controls how similar nearby colors are also removed.
-                      </div>
-                    </div>
-                    <Button
-                      type="button"
-                      variant={chromaKeyEnabled ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setChromaKeyEnabled((current) => !current)}
-                    >
-                      {chromaKeyEnabled ? "Enabled" : "Disabled"}
-                    </Button>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-end">
-                    <Input
-                      type="color"
-                      value={chromaKeyColor}
-                      onChange={(event) => setChromaKeyColor(event.target.value)}
-                      disabled={!chromaKeyEnabled}
-                      className="h-12 w-20 rounded-2xl p-2"
-                    />
-                    <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
-                      <div className="grid gap-2">
-                        <Label htmlFor="chroma-key-threshold">Threshold</Label>
-                        <Input
-                          id="chroma-key-threshold"
-                          type="number"
-                          min={0}
-                          max={255}
-                          value={chromaKeyTolerance}
-                          onChange={(event) => setChromaKeyTolerance(Number(event.target.value) || 0)}
-                          disabled={!chromaKeyEnabled}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          `0` matches only the picked color. Higher values remove more similar shades.
-                        </p>
+                  <div className="grid gap-4 rounded-3xl border border-border/70 bg-background/70 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium">Chroma key</div>
+                        <div className="text-xs text-muted-foreground">
+                          Remove a picked color to transparency. Threshold controls how similar nearby colors are also removed.
+                        </div>
                       </div>
                       <Button
                         type="button"
-                        variant="outline"
-                        onClick={() => void handleDetectEdgeColor()}
-                        disabled={!activeSprite || isDetectingEdgeColor}
+                        variant={chromaKeyEnabled ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setChromaKeyEnabled((current) => !current)}
                       >
-                        {isDetectingEdgeColor ? (
-                          <LoaderCircle className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Pipette className="h-4 w-4" />
-                        )}
-                        Match edge color
+                        {chromaKeyEnabled ? "Enabled" : "Disabled"}
                       </Button>
                     </div>
+                    <div className="grid gap-4 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-end">
+                      <Input
+                        type="color"
+                        value={chromaKeyColor}
+                        onChange={(event) => setChromaKeyColor(event.target.value)}
+                        disabled={!chromaKeyEnabled}
+                        className="h-12 w-20 rounded-2xl p-2"
+                      />
+                      <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
+                        <div className="grid gap-2">
+                          <Label htmlFor="chroma-key-threshold">Threshold</Label>
+                          <Input
+                            id="chroma-key-threshold"
+                            type="number"
+                            min={0}
+                            max={255}
+                            value={chromaKeyTolerance}
+                            onChange={(event) => setChromaKeyTolerance(Number(event.target.value) || 0)}
+                            disabled={!chromaKeyEnabled}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            `0` matches only the picked color. Higher values remove more similar shades.
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => void handleDetectEdgeColor()}
+                          disabled={!activeSprite || isDetectingEdgeColor}
+                        >
+                          {isDetectingEdgeColor ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Pipette className="h-4 w-4" />
+                          )}
+                          Match edge color
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-3xl border border-border/70 bg-background/70 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium">Frame gallery</div>
+                        <div className="text-xs text-muted-foreground">
+                          Click a frame to set the usable frame count through that point.
+                        </div>
+                      </div>
+                      <Badge variant="secondary">{previewFrameCount} active</Badge>
+                    </div>
+                    <div className="mt-4 grid gap-4 rounded-2xl border border-border/60 bg-background/80 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+                      <div className="grid gap-2">
+                        <Label htmlFor="sprite-frame-skip-count">Skip Every X Frames</Label>
+                        <Input
+                          id="sprite-frame-skip-count"
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={frameSkipCount}
+                          onChange={(event) => setFrameSkipCount(Math.max(0, Number(event.target.value) || 0))}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="sprite-frame-skip-start">Start At Index</Label>
+                        <Input
+                          id="sprite-frame-skip-start"
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={frameSkipStart}
+                          onChange={(event) => setFrameSkipStart(Math.max(0, Number(event.target.value) || 0))}
+                        />
+                      </div>
+                      <Button type="button" variant="outline" onClick={applyFrameSkipSelection}>
+                        Apply selection
+                      </Button>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" onClick={selectAllFrames} disabled={!frameGrid?.isValid}>
+                        Select all
+                      </Button>
+                      <Button type="button" variant="outline" onClick={unselectAllFrames} disabled={!frameGrid?.isValid}>
+                        Unselect all
+                      </Button>
+                      <Button type="button" variant="outline" onClick={resetFrameSkipInputs}>
+                        Reset skip inputs
+                      </Button>
+                    </div>
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      `0` skips nothing. Example: skip `1`, start `0` keeps every other frame using the real frame indexes.
+                    </p>
+                    {!frameGrid?.isValid ? (
+                      <div className="mt-4 rounded-2xl border border-dashed border-destructive/40 bg-destructive/5 p-6 text-sm text-destructive">
+                        Cell dimensions must divide the sprite sheet cleanly before frames can be previewed here.
+                      </div>
+                    ) : frameTiles.length === 0 ? (
+                      <div className="mt-4 rounded-2xl border border-dashed border-border p-6 text-sm text-muted-foreground">
+                        No frames available for the current grid.
+                      </div>
+                    ) : (
+                      <ScrollArea className="mt-4 h-[360px] pr-3 md:h-[460px]">
+                        <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+                          {frameTiles.map((frame) => {
+                            const enabled = selectedFrameNumbers.includes(frame.number);
+
+                            return (
+                              <button
+                                key={frame.index}
+                                type="button"
+                                onClick={() => toggleFrameNumber(frame.number)}
+                                className={`overflow-hidden rounded-[1.5rem] border text-left transition hover:-translate-y-0.5 hover:shadow-md ${
+                                  enabled
+                                    ? "border-primary/60 bg-primary/6"
+                                    : "border-border/70 bg-background/70 hover:border-primary/40 hover:bg-secondary/40"
+                                }`}
+                              >
+                                <div className="relative aspect-square bg-secondary/30">
+                                  <div
+                                    className="absolute inset-0 bg-contain bg-no-repeat"
+                                    style={{
+                                      backgroundImage: `url(${activeSprite.imageAssetPath})`,
+                                      backgroundSize: `${Math.max(
+                                        (activeSprite.imageWidth / cellWidth) * 100,
+                                        100,
+                                      )}% ${Math.max((activeSprite.imageHeight / cellHeight) * 100, 100)}%`,
+                                      backgroundPosition: `${frame.column * 100}% ${frame.row * 100}%`,
+                                    }}
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between gap-3 p-3">
+                                  <div>
+                                    <div className="text-sm font-medium">Frame {frame.number}</div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {enabled ? "Included in preview" : "Excluded from preview"}
+                                    </div>
+                                  </div>
+                                  {enabled ? <Check className="h-4 w-4 text-primary" /> : null}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </ScrollArea>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                    <span>{activeSprite.imageWidth}x{activeSprite.imageHeight}px</span>
+                    <span>{previewFrameCount} frames</span>
+                    <span>{frameCount} configured</span>
+                    <span>{frameGrid?.columns ?? 0} columns</span>
+                    <span>{frameGrid?.rows ?? 0} rows</span>
+                    <span>
+                      {chromaKeyEnabled ? `key ${chromaKeyColor} @ ${chromaKeyTolerance}` : "chroma key off"}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-3">
+                    <Button type="button" onClick={() => void handleSaveSprite()} disabled={isSaving}>
+                      {isSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+                      Save cell settings
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void handleExportGif()}
+                      disabled={isExportingGif || !frameGrid?.isValid || previewFrameCount < 1}
+                    >
+                      {isExportingGif ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      Export GIF
+                    </Button>
+                    {activeSprite.gifAssetPath ? (
+                      <a
+                        href={activeSprite.gifAssetPath}
+                        download={`${activeSprite.title.replace(/\s+/g, "-").toLowerCase() || "sprite"}.gif`}
+                        className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium transition hover:bg-secondary"
+                      >
+                        <Download className="h-4 w-4" />
+                        Download GIF
+                      </a>
+                    ) : null}
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                  <span>{activeSprite.imageWidth}x{activeSprite.imageHeight}px</span>
-                  <span>{previewFrameCount} frames</span>
-                  <span>{frameCount} configured</span>
-                  <span>{frameGrid?.columns ?? 0} columns</span>
-                  <span>{frameGrid?.rows ?? 0} rows</span>
-                  <span>
-                    {chromaKeyEnabled ? `key ${chromaKeyColor} @ ${chromaKeyTolerance}` : "chroma key off"}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <Button type="button" onClick={() => void handleSaveSprite()} disabled={isSaving}>
-                    {isSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
-                    Save cell settings
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => void handleExportGif()}
-                    disabled={isExportingGif || !frameGrid?.isValid || previewFrameCount < 1}
-                  >
-                    {isExportingGif ? (
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Download className="h-4 w-4" />
-                    )}
-                    Export GIF
-                  </Button>
-                  {activeSprite.gifAssetPath ? (
-                    <a
-                      href={activeSprite.gifAssetPath}
-                      download={`${activeSprite.title.replace(/\s+/g, "-").toLowerCase() || "sprite"}.gif`}
-                      className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium transition hover:bg-secondary"
-                    >
-                      <Download className="h-4 w-4" />
-                      Download GIF
-                    </a>
-                  ) : null}
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Animation preview</CardTitle>
-            <CardDescription>Phaser renders the selected sprite sheet using the configured cell dimensions.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {!activeSprite ? (
-              <div className="rounded-3xl border border-dashed border-border p-10 text-center text-muted-foreground">
-                Select a sprite to preview it.
+                <div className="space-y-5 xl:sticky xl:top-6 xl:self-start">
+                  <Card className="border-border/70 bg-background/70">
+                    <CardHeader>
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <CardTitle>Animation preview</CardTitle>
+                          <CardDescription>Phaser renders the current sprite slicing in place while you edit.</CardDescription>
+                        </div>
+                        <Badge variant="secondary">{playbackFps} FPS</Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {!frameGrid?.isValid ? (
+                        <div className="rounded-3xl border border-dashed border-destructive/40 bg-destructive/5 p-10 text-center text-sm text-destructive">
+                          Cell dimensions must divide the sprite sheet cleanly before playback can start.
+                        </div>
+                      ) : previewFrameCount < 1 ? (
+                        <div className="rounded-3xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
+                          Select at least one frame to preview the animation.
+                        </div>
+                      ) : (
+                        <PhaserSpritePlayer
+                          spriteId={activeSprite.spriteId}
+                          imageAssetPath={activeSprite.imageAssetPath}
+                          cellWidth={cellWidth}
+                          cellHeight={cellHeight}
+                          fps={playbackFps}
+                          frameCount={previewFrameCount}
+                          selectedFrameNumbers={selectedFrameNumbers}
+                          chromaKeyColor={chromaKeyEnabled ? chromaKeyColor : null}
+                          chromaKeyTolerance={chromaKeyTolerance}
+                        />
+                      )}
+                      <div className="grid gap-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <Label htmlFor="sprite-fps">Playback FPS</Label>
+                          <div className="rounded-full bg-secondary px-3 py-1 text-sm font-medium">
+                            {playbackFps} FPS
+                          </div>
+                        </div>
+                        <Slider
+                          id="sprite-fps"
+                          min={1}
+                          max={60}
+                          step={1}
+                          value={[playbackFps]}
+                          onValueChange={(value) => setPlaybackFps(value[0] ?? DEFAULT_SPRITE_PLAYBACK_FPS)}
+                        />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
               </div>
-            ) : !frameGrid?.isValid ? (
-              <div className="rounded-3xl border border-dashed border-destructive/40 bg-destructive/5 p-10 text-center text-sm text-destructive">
-                Cell dimensions must divide the sprite sheet cleanly before playback can start.
-              </div>
-            ) : (
-              <PhaserSpritePlayer
-                spriteId={activeSprite.spriteId}
-                imageAssetPath={activeSprite.imageAssetPath}
-                cellWidth={cellWidth}
-                cellHeight={cellHeight}
-                fps={playbackFps}
-                frameCount={previewFrameCount}
-                chromaKeyColor={chromaKeyEnabled ? chromaKeyColor : null}
-                chromaKeyTolerance={chromaKeyTolerance}
-              />
             )}
           </CardContent>
         </Card>

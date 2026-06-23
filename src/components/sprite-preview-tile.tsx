@@ -11,6 +11,7 @@ type Props = {
   cellWidth: number;
   cellHeight: number;
   frameCount: number;
+  selectedFrameNumbers?: number[];
   fps: number;
   animate: boolean;
   alt: string;
@@ -43,6 +44,7 @@ export function SpritePreviewTile({
   cellWidth,
   cellHeight,
   frameCount,
+  selectedFrameNumbers,
   fps,
   animate,
   alt,
@@ -76,8 +78,12 @@ export function SpritePreviewTile({
       }
 
       const columns = Math.max(Math.floor(imageWidth / cellWidth), 1);
-      const sourceX = (frameIndex % columns) * cellWidth;
-      const sourceY = Math.floor(frameIndex / columns) * cellHeight;
+      const selectedFrameIndex =
+        selectedFrameNumbers && selectedFrameNumbers.length > 0
+          ? Math.max((selectedFrameNumbers[frameIndex] ?? 1) - 1, 0)
+          : frameIndex;
+      const sourceX = (selectedFrameIndex % columns) * cellWidth;
+      const sourceY = Math.floor(selectedFrameIndex / columns) * cellHeight;
 
       context.clearRect(0, 0, canvas.width, canvas.height);
       context.drawImage(
@@ -92,7 +98,9 @@ export function SpritePreviewTile({
         canvas.height,
       );
 
-      frameIndex = (frameIndex + 1) % Math.max(frameCount, 1);
+      const cycleLength =
+        selectedFrameNumbers && selectedFrameNumbers.length > 0 ? selectedFrameNumbers.length : Math.max(frameCount, 1);
+      frameIndex = (frameIndex + 1) % cycleLength;
     };
 
     image.onload = () => {
@@ -111,7 +119,7 @@ export function SpritePreviewTile({
         window.clearInterval(intervalId);
       }
     };
-  }, [assetPath, cellHeight, cellWidth, fps, frameCount, imageHeight, imageWidth, shouldAnimateSheet]);
+  }, [assetPath, cellHeight, cellWidth, fps, frameCount, imageHeight, imageWidth, selectedFrameNumbers, shouldAnimateSheet]);
 
   if (shouldAnimateSheet) {
     return (

@@ -90,6 +90,7 @@ export interface SpriteAsset {
   cellHeight: number;
   playbackFps: number;
   frameCount: number;
+  selectedFrameNumbers: number[];
   chromaKeyColor: string | null;
   chromaKeyTolerance: number;
   gifPath: string | null;

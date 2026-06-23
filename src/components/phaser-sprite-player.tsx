@@ -9,6 +9,7 @@ type Props = {
   cellHeight: number;
   fps: number;
   frameCount: number;
+  selectedFrameNumbers?: number[];
   chromaKeyColor: string | null;
   chromaKeyTolerance: number;
 };
@@ -75,6 +76,7 @@ export function PhaserSpritePlayer({
   cellHeight,
   fps,
   frameCount,
+  selectedFrameNumbers,
   chromaKeyColor,
   chromaKeyTolerance,
 }: Props) {
@@ -118,14 +120,14 @@ export function PhaserSpritePlayer({
             });
           },
           create() {
-            const frameTotal = Math.max(frameCount, 1);
+            const frames =
+              selectedFrameNumbers && selectedFrameNumbers.length > 0
+                ? selectedFrameNumbers.map((frameNumber) => ({ key: textureKey, frame: Math.max(frameNumber - 1, 0) }))
+                : Array.from({ length: Math.max(frameCount, 1) }, (_, index) => ({ key: textureKey, frame: index }));
 
             this.anims.create({
               key: animationKey,
-              frames: this.anims.generateFrameNumbers(textureKey, {
-                start: 0,
-                end: Math.max(frameTotal - 1, 0),
-              }),
+              frames,
               frameRate: fps,
               repeat: -1,
             });
@@ -155,6 +157,7 @@ export function PhaserSpritePlayer({
     fps,
     frameCount,
     imageAssetPath,
+    selectedFrameNumbers,
     spriteId,
   ]);
 

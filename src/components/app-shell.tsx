@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import Image from "next/image";
-import { Copy, Download, LoaderCircle, Play, RefreshCw, RotateCcw, WandSparkles, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, Import, LoaderCircle, Play, RefreshCw, RotateCcw, WandSparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { AssetInspectorDrawer } from "@/components/asset-inspector-drawer";
 import { EntityActionMenu } from "@/components/entity-action-menu";
@@ -12,16 +12,13 @@ import { JobInspectorContent } from "@/components/job-inspector-content";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import {
   DEFAULT_PROVIDER,
-  DEFAULT_PREVIEW_FPS,
   DEFAULT_VIDEO_ASPECT_RATIO,
   DEFAULT_VIDEO_DURATION,
   DEFAULT_VIDEO_RESOLUTION,
@@ -44,6 +41,10 @@ const timestampFormatter = new Intl.DateTimeFormat("en-US", {
 
 function formatTimestamp(value: string) {
   return `${timestampFormatter.format(new Date(value))} UTC`;
+}
+
+function getJobDisplayTitle(job: JobManifest) {
+  return job.title.trim() || job.prompt;
 }
 
 function getJobPreviewFrames(job: JobManifest) {
@@ -80,6 +81,7 @@ function JobLibraryPreview({
 }) {
   const previewFrames = getJobPreviewFrames(job);
   const previewFrame = getPreviewFrameForTick(job, previewTick);
+  const displayTitle = getJobDisplayTitle(job);
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "Enter" || event.key === " ") {
@@ -128,10 +130,7 @@ function JobLibraryPreview({
               <div className="flex min-w-0 items-start gap-2">
                 <span className="group/prompt relative block min-w-0 max-w-full flex-1">
                   <span className="block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-medium">
-                    {job.prompt}
-                  </span>
-                  <span className="absolute top-full left-0 z-20 hidden max-h-[min(24rem,calc(100vh-6rem))] max-w-[min(32rem,calc(100vw-3rem))] translate-y-2 overflow-y-auto whitespace-normal break-words rounded-2xl border border-border bg-popover px-3 py-2 text-sm font-normal text-popover-foreground shadow-lg group-hover/prompt:block hover:block">
-                    {job.prompt}
+                    {displayTitle}
                   </span>
                 </span>
                 <span className="group/copy relative shrink-0">
@@ -157,6 +156,9 @@ function JobLibraryPreview({
                   </span>
                 </span>
               </div>
+              {displayTitle !== job.prompt ? (
+                <p className="line-clamp-2 text-sm text-muted-foreground">{job.prompt}</p>
+              ) : null}
               <span className="block text-xs text-muted-foreground">{formatTimestamp(job.createdAt)}</span>
             </div>
             <span
@@ -170,7 +172,7 @@ function JobLibraryPreview({
                 {formatStatus(job.status)}
               </span>
               <EntityActionMenu
-                entityLabel={`Job ${job.title}`}
+                entityLabel={`Job ${displayTitle}`}
                 onOpen={() => {
                   onSelect();
                 }}
@@ -196,13 +198,57 @@ function JobLibraryPreview({
   );
 }
 
+function ExpandablePrompt({
+  prompt,
+  expanded,
+  onToggle,
+}: {
+  prompt: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="rounded-3xl border border-border/70 bg-background/70 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-medium">Prompt</div>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onToggle}
+            aria-expanded={expanded}
+          >
+            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            {expanded ? "Collapse" : "Expand"}
+          </Button>
+        </div>
+      </div>
+      <p
+        className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground"
+        style={
+          expanded
+            ? undefined
+            : {
+                display: "-webkit-box",
+                WebkitBoxOrient: "vertical",
+                WebkitLineClamp: 3,
+                overflow: "hidden",
+              }
+        }
+      >
+        {prompt}
+      </p>
+    </div>
+  );
+}
+
 export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
   const [jobs, setJobs] = useState(initialJobs);
   const [activeJobId, setActiveJobId] = useState(initialJobs[0]?.jobId ?? null);
   const [inspectedJobId, setInspectedJobId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isExportingSpritesheet, setIsExportingSpritesheet] = useState(false);
-  const [isCachingFrames, setIsCachingFrames] = useState(false);
+  const [isImportingSprite, setIsImportingSprite] = useState(false);
   const [provider, setProvider] = useState<VideoProvider>(DEFAULT_PROVIDER);
   const [prompt, setPrompt] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -213,26 +259,13 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
   const [previewTick, setPreviewTick] = useState(0);
   const [jobSearchQuery, setJobSearchQuery] = useState("");
   const [jobStatusFilter, setJobStatusFilter] = useState<"all" | JobManifest["status"]>("all");
-  const [frameSkipCount, setFrameSkipCount] = useState(0);
-  const [frameSkipStart, setFrameSkipStart] = useState(0);
-  const [previewIndex, setPreviewIndex] = useState(0);
-  const [previewFps, setPreviewFps] = useState<number>(initialJobs[0]?.previewFps ?? DEFAULT_PREVIEW_FPS);
-  const [cachedFrameUrls, setCachedFrameUrls] = useState<Record<number, string>>({});
   const [libraryCardHeight, setLibraryCardHeight] = useState<number | null>(null);
-  const debounceRef = useRef<number | null>(null);
+  const [isPromptExpanded, setIsPromptExpanded] = useState(false);
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
   const createCardRef = useRef<HTMLDivElement | null>(null);
-  const cacheUrlsRef = useRef<string[]>([]);
   const activeJob = jobs.find((job) => job.jobId === activeJobId) ?? null;
   const inspectedJob = jobs.find((job) => job.jobId === inspectedJobId) ?? null;
   const retrySourceJob = jobs.find((job) => job.jobId === retrySourceJobId) ?? null;
-  const activeJobFrames = activeJob?.frames ?? [];
-  const frameCacheKey = activeJob ? activeJob.frames.map((frame) => frame.fileName).join("|") : "";
-  const selectedFrames = activeJob
-    ? activeJob.frames.filter((frame) => activeJob.selectedFrameNumbers.includes(frame.number))
-    : [];
-  const previewFrame = selectedFrames[previewIndex % Math.max(selectedFrames.length, 1)] ?? null;
-  const previewFrameSrc = previewFrame ? cachedFrameUrls[previewFrame.number] ?? null : null;
   const filteredJobs = jobs.filter((job) => {
     const normalizedQuery = jobSearchQuery.trim().toLowerCase();
     const matchesQuery =
@@ -250,15 +283,6 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
     if (imageInput) {
       imageInput.value = "";
     }
-  }
-
-  function clearFrameCache() {
-    for (const objectUrl of cacheUrlsRef.current) {
-      URL.revokeObjectURL(objectUrl);
-    }
-
-    cacheUrlsRef.current = [];
-    setCachedFrameUrls({});
   }
 
   async function refreshJobs(preferredJobId?: string) {
@@ -288,27 +312,6 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
   }, []);
 
   useEffect(() => {
-    if (!activeJob) {
-      return;
-    }
-
-    setPreviewFps(activeJob.previewFps);
-  }, [activeJob]);
-
-  useEffect(() => {
-    if (!activeJob || selectedFrames.length === 0) {
-      setPreviewIndex(0);
-      return;
-    }
-
-    const interval = window.setInterval(() => {
-      setPreviewIndex((current) => (current + 1) % selectedFrames.length);
-    }, Math.max(1000 / previewFps, 16));
-
-    return () => window.clearInterval(interval);
-  }, [activeJob, previewFps, selectedFrames.length]);
-
-  useEffect(() => {
     if (!jobs.some((job) => POLLABLE_STATUSES.has(job.status))) {
       return;
     }
@@ -319,73 +322,6 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
 
     return () => window.clearInterval(interval);
   }, [jobs, activeJobId]);
-
-  useEffect(() => {
-    if (!activeJobId || activeJobFrames.length === 0) {
-      clearFrameCache();
-      setIsCachingFrames(false);
-      return;
-    }
-
-    let cancelled = false;
-    const nextObjectUrls: string[] = [];
-
-    clearFrameCache();
-    setIsCachingFrames(true);
-
-    void Promise.all(
-      activeJobFrames.map(async (frame) => {
-        const response = await fetch(frame.assetPath, { cache: "force-cache" });
-
-        if (!response.ok) {
-          throw new Error(`Failed to preload frame ${frame.number}.`);
-        }
-
-        const objectUrl = URL.createObjectURL(await response.blob());
-        nextObjectUrls.push(objectUrl);
-
-        return [frame.number, objectUrl] as const;
-      }),
-    )
-      .then((entries) => {
-        if (cancelled) {
-          nextObjectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl));
-          return;
-        }
-
-        cacheUrlsRef.current = nextObjectUrls;
-        setCachedFrameUrls(Object.fromEntries(entries));
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          toast.error(error instanceof Error ? error.message : "Unable to cache frames.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsCachingFrames(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-      nextObjectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl));
-      clearFrameCache();
-    };
-    // `frameCacheKey` captures the frame list changes; depending on the full job object
-    // would rebuild the cache on unrelated updates like FPS or selection changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeJobId, frameCacheKey]);
-
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) {
-        window.clearTimeout(debounceRef.current);
-      }
-
-      clearFrameCache();
-    };
-  }, []);
 
   useEffect(() => {
     const element = createCardRef.current;
@@ -419,6 +355,10 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
       mediaQuery.removeEventListener("change", updateHeight);
     };
   }, []);
+
+  useEffect(() => {
+    setIsPromptExpanded(false);
+  }, [activeJobId]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -470,122 +410,58 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
     }
   }
 
-  async function patchActiveJob(body: Record<string, unknown>) {
+  async function handleImportAsSprite() {
     if (!activeJob) {
       return;
     }
 
-    const response = await fetch(`/api/jobs/${activeJob.jobId}`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error ?? "Unable to update the job.");
-    }
-
-    setJobs((current) =>
-      current.map((job) => (job.jobId === data.job.jobId ? data.job : job)),
-    );
-  }
-
-  async function handleFrameToggle(frameNumber: number, checked: boolean) {
-    if (!activeJob) {
-      return;
-    }
-
-    const nextSelected = checked
-      ? [...activeJob.selectedFrameNumbers, frameNumber].sort((a, b) => a - b)
-      : activeJob.selectedFrameNumbers.filter((value) => value !== frameNumber);
-
-    await updateSelectedFrames(nextSelected);
-  }
-
-  async function toggleFrameSelection(frameNumber: number) {
-    if (!activeJob) {
-      return;
-    }
-
-    const checked = !activeJob.selectedFrameNumbers.includes(frameNumber);
-    await handleFrameToggle(frameNumber, checked);
-  }
-
-  async function updateSelectedFrames(nextSelected: number[]) {
-    if (!activeJob) {
-      return;
-    }
-
-    setJobs((current) =>
-      current.map((job) =>
-        job.jobId === activeJob.jobId ? { ...job, selectedFrameNumbers: nextSelected } : job,
-      ),
-    );
+    setIsImportingSprite(true);
 
     try {
-      await patchActiveJob({ selectedFrameNumbers: nextSelected });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to save frame selection.");
-      await refreshJobs(activeJob.jobId);
-    }
-  }
+      if (!activeJob.spritesheet) {
+        const exportResponse = await fetch(`/api/jobs/${activeJob.jobId}/spritesheet`, {
+          method: "POST",
+        });
+        const exportData = await exportResponse.json();
 
-  async function applyFrameSkipSelection() {
-    if (!activeJob) {
-      return;
-    }
+        if (!exportResponse.ok) {
+          throw new Error(exportData.error ?? "Unable to export spritesheet.");
+        }
 
-    const normalizedSkip = Math.max(0, Math.floor(frameSkipCount));
-    const normalizedStart = Math.max(0, Math.floor(frameSkipStart));
-    const step = normalizedSkip + 1;
-    const nextSelected = activeJob.frames
-      .filter((_, index) => index >= normalizedStart && (index - normalizedStart) % step === 0)
-      .map((frame) => frame.number);
+        setJobs((current) =>
+          current.map((job) => (job.jobId === exportData.job.jobId ? exportData.job : job)),
+        );
+      }
 
-    await updateSelectedFrames(nextSelected);
-  }
-
-  async function selectAllFrames() {
-    if (!activeJob) {
-      return;
-    }
-
-    await updateSelectedFrames(activeJob.frames.map((frame) => frame.number));
-  }
-
-  async function unselectAllFrames() {
-    await updateSelectedFrames([]);
-  }
-
-  async function handleSpritesheetExport() {
-    if (!activeJob) {
-      return;
-    }
-
-    setIsExportingSpritesheet(true);
-
-    try {
-      const response = await fetch(`/api/jobs/${activeJob.jobId}/spritesheet`, {
+      const importResponse = await fetch("/api/sprites/import-generated", {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ jobId: activeJob.jobId }),
       });
-      const data = await response.json();
+      const importData = await importResponse.json();
 
-      if (!response.ok) {
-        throw new Error(data.error ?? "Unable to export spritesheet.");
+      if (!importResponse.ok) {
+        throw new Error(importData.error ?? "Unable to import sprite.");
       }
 
       setJobs((current) =>
-        current.map((job) => (job.jobId === data.job.jobId ? data.job : job)),
+        current.map((job) =>
+          job.jobId === activeJob.jobId
+            ? {
+                ...job,
+                derivedSpriteIds: Array.from(new Set([...job.derivedSpriteIds, importData.sprite.spriteId])),
+              }
+            : job,
+        ),
       );
-      toast.success("Spritesheet exported.");
+      toast.success("Sprite imported to the library.");
+      window.location.assign(`/sprites?sprite=${encodeURIComponent(importData.sprite.spriteId)}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to export spritesheet.");
+      toast.error(error instanceof Error ? error.message : "Unable to import sprite.");
     } finally {
-      setIsExportingSpritesheet(false);
+      setIsImportingSprite(false);
     }
   }
 
@@ -699,32 +575,11 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
     }
   }
 
-  function handlePreviewFpsChange(value: number[]) {
-    const nextValue = value[0] ?? DEFAULT_PREVIEW_FPS;
-    setPreviewFps(nextValue);
-
-    setJobs((current) =>
-      current.map((job) =>
-        job.jobId === activeJob?.jobId ? { ...job, previewFps: nextValue } : job,
-      ),
-    );
-
-    if (debounceRef.current) {
-      window.clearTimeout(debounceRef.current);
-    }
-
-    debounceRef.current = window.setTimeout(() => {
-      void patchActiveJob({ previewFps: nextValue }).catch((error) => {
-        toast.error(error instanceof Error ? error.message : "Unable to save preview FPS.");
-      });
-    }, 250);
-  }
-
   return (
     <main className="flex flex-col gap-6">
       <EntityToolbar
         title="Generate Workflow"
-        description="Create a run, review extracted frames, and save the curated result as a reusable sprite asset."
+        description="Create a run, review the generated output, and hand successful runs off to the sprite library."
         actions={
           <>
             <Badge variant="secondary">{jobs.length} runs</Badge>
@@ -769,16 +624,16 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
         }
       />
 
-      <section className="flex flex-col gap-6 lg:flex-row lg:items-stretch">
-        <div ref={createCardRef} className="lg:min-w-0 lg:flex-[1.15]">
+      <section>
+        <div ref={createCardRef}>
           <Card className="flex h-full flex-col overflow-hidden">
             <CardHeader className="gap-4 border-b border-border/60 bg-card/60">
               <Badge className="w-fit">Image to video</Badge>
               <div className="space-y-2">
-                <CardTitle className="text-3xl sm:text-4xl">Game asset motion lab</CardTitle>
+                <CardTitle className="text-3xl sm:text-4xl">Image to video</CardTitle>
                 <CardDescription className="max-w-2xl text-base">
                   Upload a source image, generate a local video with xAI, extract every frame,
-                  then curate the exact loop you want to use in your asset pipeline.
+                  then import the resulting motion into the sprite library when it is ready.
                 </CardDescription>
               </div>
             </CardHeader>
@@ -903,16 +758,15 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
             </CardContent>
           </Card>
         </div>
+      </section>
 
-        <div
-          className="lg:min-w-0 lg:flex-[0.85]"
-          style={libraryCardHeight ? { height: `${libraryCardHeight}px` } : undefined}
-        >
+      <section>
+        <div style={libraryCardHeight ? { minHeight: `${libraryCardHeight}px` } : undefined}>
           <Card className="flex h-full min-h-0 flex-col overflow-hidden">
             <CardHeader>
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <CardTitle>Run Browser</CardTitle>
+                  <CardTitle>History</CardTitle>
                   <CardDescription>All uploads, videos, and frame selections persist on disk and are filterable here.</CardDescription>
                 </div>
                 <Button
@@ -949,7 +803,7 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
                         type="button"
                         variant="ghost"
                         size="icon"
-                        aria-label={`Open inspector for ${job.title}`}
+                        aria-label={`Open inspector for ${getJobDisplayTitle(job)}`}
                         onClick={() => setInspectedJobId(job.jobId)}
                       >
                         <Play className="h-4 w-4" />
@@ -963,13 +817,13 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
         </div>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+      <section>
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <div>
                 <CardTitle>Job detail</CardTitle>
-                <CardDescription>Source media, generation state, and extracted output.</CardDescription>
+                <CardDescription>Source media, generation state, extracted output, and sprite import.</CardDescription>
               </div>
               <div className="flex items-center gap-2">
                 {activeJob ? <Badge>{formatStatus(activeJob.status)}</Badge> : null}
@@ -994,7 +848,7 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
               </div>
             ) : (
               <>
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
                   <div className="space-y-2">
                     <div className="text-sm font-medium">Source image</div>
                     <div className="relative aspect-square overflow-hidden rounded-3xl border border-border/70 bg-secondary/50">
@@ -1008,39 +862,64 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">Generated video</div>
-                    <div className="flex aspect-square items-center justify-center overflow-hidden rounded-3xl border border-border/70 bg-secondary/50">
-                      {activeJob.videoAssetPath ? (
-                        <video
-                          className="h-full w-full object-cover"
-                          src={activeJob.videoAssetPath}
-                          controls
-                          loop
-                          muted
-                          playsInline
-                        />
-                      ) : (
-                        <div className="flex flex-col items-center gap-3 text-center text-sm text-muted-foreground">
-                          {POLLABLE_STATUSES.has(activeJob.status) ? (
-                            <LoaderCircle className="h-6 w-6 animate-spin" />
-                          ) : (
-                            <Play className="h-6 w-6" />
-                          )}
-                          <span>
-                            {activeJob.status === "failed" || activeJob.status === "expired"
-                              ? activeJob.errorMessage
-                              : "Video will appear here when the generation finishes."}
-                          </span>
-                        </div>
-                      )}
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Generated video</div>
+                      <div className="flex aspect-video items-center justify-center overflow-hidden rounded-3xl border border-border/70 bg-secondary/50">
+                        {activeJob.videoAssetPath ? (
+                          <video
+                            className="h-full w-full object-cover"
+                            src={activeJob.videoAssetPath}
+                            controls
+                            loop
+                            muted
+                            playsInline
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center gap-3 text-center text-sm text-muted-foreground">
+                            {POLLABLE_STATUSES.has(activeJob.status) ? (
+                              <LoaderCircle className="h-6 w-6 animate-spin" />
+                            ) : (
+                              <Play className="h-6 w-6" />
+                            )}
+                            <span>
+                              {activeJob.status === "failed" || activeJob.status === "expired"
+                                ? activeJob.errorMessage
+                                : "Video will appear here when the generation finishes."}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-3xl border border-border/70 bg-background/70 p-4">
+                      <div className="text-sm font-medium">Import behavior</div>
+                      <div className="mt-2 space-y-2 text-sm text-muted-foreground">
+                        <p>Import creates a spritesheet for this run if needed, adds it to the library, and opens the sprite editor.</p>
+                        <p>Frame gallery editing, playback tuning, and GIF export now live on the sprites page.</p>
+                        {activeJob.spritesheet ? (
+                          <p>
+                            Existing spritesheet: {activeJob.spritesheet.frameCount} frames, {activeJob.spritesheet.columns}x{activeJob.spritesheet.rows},{" "}
+                            {activeJob.spritesheet.frameWidth}x{activeJob.spritesheet.frameHeight} cells.
+                          </p>
+                        ) : (
+                          <p>No spritesheet exported yet for this run. It will be generated during import.</p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-border/70 bg-background/70 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-medium">Prompt</div>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-lg font-semibold">{getJobDisplayTitle(activeJob)}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                      <span>{activeJob.duration}s duration</span>
+                      <span>{activeJob.aspectRatio} aspect ratio</span>
+                      <span>{activeJob.resolution} resolution</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-3">
                     <Button
                       type="button"
                       variant="outline"
@@ -1050,16 +929,32 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
                       <Copy className="h-4 w-4" />
                       Copy prompt
                     </Button>
-                  </div>
-                  <p className="mt-2 text-sm text-muted-foreground">{activeJob.prompt}</p>
-                  <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                    <span>{activeJob.duration}s duration</span>
-                    <span>{activeJob.aspectRatio} aspect ratio</span>
-                    <span>{activeJob.resolution} resolution</span>
+                    <Button
+                      type="button"
+                      onClick={() => void handleImportAsSprite()}
+                      disabled={activeJob.status !== "ready" || activeJob.frames.length === 0 || isImportingSprite}
+                    >
+                      {isImportingSprite ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Import className="h-4 w-4" />}
+                      Import as sprite
+                    </Button>
+                    {activeJob.derivedSpriteIds[0] ? (
+                      <a
+                        href={`/sprites?sprite=${encodeURIComponent(activeJob.derivedSpriteIds[0])}`}
+                        className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium transition hover:bg-secondary"
+                      >
+                        Open in sprites
+                      </a>
+                    ) : null}
                   </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-3">
+                <ExpandablePrompt
+                  prompt={activeJob.prompt}
+                  expanded={isPromptExpanded}
+                  onToggle={() => setIsPromptExpanded((current) => !current)}
+                />
+
+                <div className="grid gap-4 md:grid-cols-4">
                   <div className="rounded-3xl border border-border/70 bg-background/70 p-4">
                     <div className="text-sm font-medium">Run Status</div>
                     <div className="mt-2 text-sm text-muted-foreground">
@@ -1067,10 +962,14 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
                     </div>
                   </div>
                   <div className="rounded-3xl border border-border/70 bg-background/70 p-4">
-                    <div className="text-sm font-medium">Curated Frames</div>
+                    <div className="text-sm font-medium">Total frames</div>
                     <div className="mt-2 text-sm text-muted-foreground">
-                      {activeJob.selectedFrameNumbers.length} of {activeJob.frames.length}
+                      {activeJob.frames.length}
                     </div>
+                  </div>
+                  <div className="rounded-3xl border border-border/70 bg-background/70 p-4">
+                    <div className="text-sm font-medium">Selected frames</div>
+                    <div className="mt-2 text-sm text-muted-foreground">{activeJob.selectedFrameNumbers.length}</div>
                   </div>
                   <div className="rounded-3xl border border-border/70 bg-background/70 p-4">
                     <div className="text-sm font-medium">Related Sprites</div>
@@ -1085,240 +984,10 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
             )}
           </CardContent>
         </Card>
-
-        <div className="grid gap-6">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <CardTitle>Loop preview</CardTitle>
-                  <CardDescription>Only selected frames are used in this preview.</CardDescription>
-                </div>
-                <div className="flex items-center gap-2">
-                  {activeJob ? <Badge variant="secondary">{selectedFrames.length} active frames</Badge> : null}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void handleSpritesheetExport()}
-                    disabled={!activeJob || activeJob.status !== "ready" || selectedFrames.length === 0 || isExportingSpritesheet}
-                  >
-                    {isExportingSpritesheet ? (
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Download className="h-4 w-4" />
-                    )}
-                    Export spritesheet
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="relative aspect-[16/9] overflow-hidden rounded-[1.75rem] border border-border/70 bg-secondary/40">
-                {activeJob && selectedFrames.length > 0 && previewFrameSrc ? (
-                  <Image
-                    src={previewFrameSrc}
-                    alt={`Preview frame ${previewFrame?.number ?? 0}`}
-                    fill
-                    unoptimized
-                    sizes="(min-width: 1280px) 55vw, 100vw"
-                    className="object-contain"
-                  />
-                ) : activeJob && selectedFrames.length > 0 && isCachingFrames ? (
-                  <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-                    <LoaderCircle className="h-6 w-6 animate-spin" />
-                    <span>Loading frames into memory for preview.</span>
-                  </div>
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    {activeJob ? "Select at least one frame to preview the loop." : "No active job selected."}
-                  </div>
-                )}
-              </div>
-
-              {activeJob?.spritesheet ? (
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-border/70 bg-background/70 p-4 text-sm">
-                  <div className="text-muted-foreground">
-                    {activeJob.spritesheet.frameCount} frames, {activeJob.spritesheet.columns}x{activeJob.spritesheet.rows},{" "}
-                    {activeJob.spritesheet.frameWidth}x{activeJob.spritesheet.frameHeight} cells
-                  </div>
-                  <a
-                    href={activeJob.spritesheet.assetPath}
-                    download={`spritesheet-${activeJob.jobId}.png`}
-                    className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium transition hover:bg-secondary"
-                  >
-                    <Download className="h-4 w-4" />
-                    Download PNG
-                  </a>
-                </div>
-              ) : null}
-
-              <div className="rounded-3xl border border-border/70 bg-background/70 p-4">
-                <div className="text-sm font-medium">Save Outcome</div>
-                <div className="mt-2 space-y-2 text-sm text-muted-foreground">
-                  <p>
-                    Exporting creates a spritesheet from the currently selected frames and links it back to this generation run.
-                  </p>
-                  <p>
-                    {activeJob
-                      ? activeJob.spritesheet
-                        ? "A spritesheet has already been exported for the current selection. Re-export after changing frame selection to replace the output."
-                        : "No spritesheet exported yet for this run."
-                      : "Select a run to manage its output."}
-                  </p>
-                  {activeJob?.derivedSpriteIds.length ? (
-                    <p>{activeJob.derivedSpriteIds.length} persisted sprite asset(s) are already linked to this run.</p>
-                  ) : null}
-                </div>
-              </div>
-
-              <div className="grid gap-3">
-                <div className="flex items-center justify-between gap-3">
-                  <Label htmlFor="fps-slider">Preview FPS</Label>
-                  <div className="rounded-full bg-secondary px-3 py-1 text-sm font-medium">
-                    {previewFps} FPS
-                  </div>
-                </div>
-                <Slider
-                  id="fps-slider"
-                  min={1}
-                  max={60}
-                  step={1}
-                  value={[previewFps]}
-                  onValueChange={handlePreviewFpsChange}
-                  disabled={!activeJob}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Frame gallery</CardTitle>
-              <CardDescription>
-                Every extracted frame stays on disk. Toggle frames to curate the loop.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {!activeJob ? (
-                <div className="rounded-3xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-                  Pick a job to inspect its frames.
-                </div>
-              ) : activeJob.frames.length === 0 ? (
-                <div className="rounded-3xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-                  Frames will appear here after extraction finishes.
-                </div>
-              ) : (
-                <div className="grid gap-4">
-                  <div className="rounded-3xl border border-border/70 bg-background/70 p-4">
-                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
-                      <div className="grid gap-2">
-                        <Label htmlFor="frame-skip-count">Skip Every X Frames</Label>
-                        <Input
-                          id="frame-skip-count"
-                          type="number"
-                          min={0}
-                          step={1}
-                          value={frameSkipCount}
-                          onChange={(event) => setFrameSkipCount(Math.max(0, Number(event.target.value) || 0))}
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="frame-skip-start">Start At Index</Label>
-                        <Input
-                          id="frame-skip-start"
-                          type="number"
-                          min={0}
-                          step={1}
-                          value={frameSkipStart}
-                          onChange={(event) => setFrameSkipStart(Math.max(0, Number(event.target.value) || 0))}
-                        />
-                      </div>
-                      <Button type="button" variant="outline" onClick={() => void applyFrameSkipSelection()}>
-                        Apply selection
-                      </Button>
-                    </div>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <Button type="button" variant="outline" onClick={() => void selectAllFrames()}>
-                        Select all
-                      </Button>
-                      <Button type="button" variant="outline" onClick={() => void unselectAllFrames()}>
-                        Unselect all
-                      </Button>
-                    </div>
-                    <p className="mt-3 text-xs text-muted-foreground">
-                      `0` skips nothing. Example: skip `1`, start `0` keeps every other frame.
-                    </p>
-                  </div>
-
-                  <ScrollArea className="h-[360px] pr-3 md:h-[540px]">
-                    <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
-                      {activeJob.frames.map((frame) => {
-                        const checked = activeJob.selectedFrameNumbers.includes(frame.number);
-                        const cachedFrameUrl = cachedFrameUrls[frame.number] ?? null;
-
-                        return (
-                          <div
-                            key={frame.fileName}
-                            role="button"
-                            tabIndex={0}
-                            aria-pressed={checked}
-                            onClick={() => void toggleFrameSelection(frame.number)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                void toggleFrameSelection(frame.number);
-                              }
-                            }}
-                            className={`cursor-pointer overflow-hidden rounded-[1.5rem] border transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                              checked
-                                ? "border-primary/60 bg-primary/6"
-                                : "border-border/70 bg-background/70 hover:border-primary/40 hover:bg-secondary/40"
-                            }`}
-                          >
-                            <div className="relative aspect-square">
-                              {cachedFrameUrl ? (
-                                <Image
-                                  src={cachedFrameUrl}
-                                  alt={`Frame ${frame.number}`}
-                                  fill
-                                  unoptimized
-                                  sizes="(min-width: 1536px) 20vw, (min-width: 640px) 33vw, 100vw"
-                                  className="object-cover"
-                                />
-                              ) : (
-                                <div className="flex h-full items-center justify-center bg-secondary/40 text-xs text-muted-foreground">
-                                  {isCachingFrames ? "Caching frame..." : "Frame not loaded"}
-                                </div>
-                              )}
-                            </div>
-                            <div className="flex items-center justify-between gap-3 p-3">
-                              <div>
-                                <div className="text-sm font-medium">Frame {frame.number}</div>
-                                <div className="text-xs text-muted-foreground">{frame.fileName}</div>
-                              </div>
-                              <div onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
-                                <Checkbox
-                                  checked={checked}
-                                  onCheckedChange={(value) => void handleFrameToggle(frame.number, value === true)}
-                                  aria-label={`Select frame ${frame.number}`}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </ScrollArea>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
       </section>
 
       <AssetInspectorDrawer
-        title={inspectedJob?.title ?? "Job"}
+        title={inspectedJob ? getJobDisplayTitle(inspectedJob) : "Job"}
         open={Boolean(inspectedJob)}
         onClose={() => setInspectedJobId(null)}
       >

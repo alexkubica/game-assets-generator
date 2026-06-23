@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Gamepad2, LoaderCircle, MoveHorizontal, Pipette, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -35,6 +35,7 @@ type TesterAssetOption = {
   cellWidth: number;
   cellHeight: number;
   frameCount: number;
+  selectedFrameNumbers?: number[];
   playbackFps: number;
   chromaKeyColor: string | null;
   chromaKeyTolerance: number;
@@ -125,6 +126,7 @@ function buildTesterAssets(sprites: SpriteAsset[], jobs: JobManifest[]): TesterA
     cellWidth: sprite.cellWidth,
     cellHeight: sprite.cellHeight,
     frameCount: sprite.frameCount,
+    selectedFrameNumbers: sprite.selectedFrameNumbers,
     playbackFps: sprite.playbackFps,
     chromaKeyColor: sprite.chromaKeyColor,
     chromaKeyTolerance: sprite.chromaKeyTolerance,
@@ -240,6 +242,39 @@ function setupToConfig(setup: TesterSetup): SpriteTesterConfig {
     states: setup.states,
     assetOverrides: setup.assetOverrides,
   };
+}
+
+function buildInitialDraftConfig(
+  initialSprites: SpriteAsset[],
+  initialJobs: JobManifest[],
+  initialSetups: TesterSetup[],
+  initialAssetKey: string | null | undefined,
+) {
+  const initialAssets = buildTesterAssets(initialSprites, initialJobs);
+  const assetLookup = new Map(initialAssets.map((asset) => [asset.assetKey, asset]));
+  const baseConfig = initialSetups[0] ? setupToConfig(initialSetups[0]) : {};
+
+  if (!initialAssetKey) {
+    return normalizeStoredConfigs(initialAssets, baseConfig);
+  }
+
+  const initialAsset = assetLookup.get(initialAssetKey);
+
+  if (!initialAsset) {
+    return normalizeStoredConfigs(initialAssets, baseConfig);
+  }
+
+  return normalizeStoredConfigs(initialAssets, {
+    ...baseConfig,
+    default: {
+      ...(baseConfig.default ?? {}),
+      assetKey: initialAssetKey,
+      fps: clampFps(
+        initialAsset.playbackFps,
+        typeof baseConfig.default?.fps === "number" ? baseConfig.default.fps : initialAsset.playbackFps,
+      ),
+    },
+  });
 }
 
 function configToSetupInput(title: string, projectId: string | null, config: SpriteTesterConfig) {
@@ -494,15 +529,17 @@ export function LevelTesterShell({
   initialSprites,
   initialJobs,
   initialSetups,
+  initialAssetKey,
 }: {
   initialSprites: SpriteAsset[];
   initialJobs: JobManifest[];
   initialSetups: TesterSetup[];
+  initialAssetKey?: string | null;
 }) {
   const [sprites, setSprites] = useState(initialSprites);
   const [jobs, setJobs] = useState(initialJobs);
   const [setups, setSetups] = useState(initialSetups);
-  const [activeSetupId, setActiveSetupId] = useState<string | null>(initialSetups[0]?.setupId ?? null);
+  const [activeSetupId, setActiveSetupId] = useState<string | null>(initialAssetKey ? null : initialSetups[0]?.setupId ?? null);
   const [setupTitleInput, setSetupTitleInput] = useState(initialSetups[0]?.title ?? "Default tester setup");
   const [isSavingSetup, setIsSavingSetup] = useState(false);
   const [isCreatingSetup, setIsCreatingSetup] = useState(false);
@@ -511,13 +548,11 @@ export function LevelTesterShell({
   const [pendingChromaSave, setPendingChromaSave] = useState<PendingChromaSave | null>(null);
   const [isApplyingSaveScope, setIsApplyingSaveScope] = useState(false);
   const [pendingMainAssetKey, setPendingMainAssetKey] = useState<string | null>(null);
+  const hasLoadedLegacyDraftRef = useRef(false);
   const testerAssets = useMemo(() => buildTesterAssets(sprites, jobs), [jobs, sprites]);
   const activeSetup = setups.find((setup) => setup.setupId === activeSetupId) ?? null;
   const [draftConfig, setDraftConfig] = useState<SpriteTesterConfig>(() =>
-    normalizeStoredConfigs(
-      buildTesterAssets(initialSprites, initialJobs),
-      initialSetups[0] ? setupToConfig(initialSetups[0]) : getLegacyDraftConfig() ?? {},
-    ),
+    buildInitialDraftConfig(initialSprites, initialJobs, initialSetups, initialAssetKey),
   );
   const spriteConfigs = useMemo(
     () => normalizeStoredConfigs(testerAssets, draftConfig),
@@ -562,6 +597,7 @@ export function LevelTesterShell({
             cellHeight: asset.sourceType === "input-image" ? asset.imageHeight : asset.cellHeight,
             fps: clampFps(config.fps ?? spriteConfigs.default.fps, spriteConfigs.default.fps),
             frameCount: Math.max(asset.frameCount, 1),
+            selectedFrameNumbers: asset.selectedFrameNumbers,
             scale: clampScale(config.scale ?? spriteConfigs.default.scale),
             sourceOrientation: normalizeOrientation(
               config.sourceOrientation ?? spriteConfigs.default.sourceOrientation,
@@ -597,6 +633,22 @@ export function LevelTesterShell({
 
     window.localStorage.setItem(TESTER_CONFIG_STORAGE_KEY, JSON.stringify(spriteConfigs));
   }, [spriteConfigs]);
+
+  useEffect(() => {
+    if (activeSetup || initialAssetKey || hasLoadedLegacyDraftRef.current) {
+      return;
+    }
+
+    const legacyDraft = getLegacyDraftConfig();
+
+    if (!legacyDraft) {
+      hasLoadedLegacyDraftRef.current = true;
+      return;
+    }
+
+    hasLoadedLegacyDraftRef.current = true;
+    setDraftConfig(normalizeStoredConfigs(testerAssets, legacyDraft));
+  }, [activeSetup, initialAssetKey, testerAssets]);
 
   function updateStateSelection(state: SpriteMotionState, assetKey: string) {
     const asset = testerAssetLookup.get(assetKey);
@@ -1260,6 +1312,7 @@ export function LevelTesterShell({
                         cellWidth={asset.cellWidth}
                         cellHeight={asset.cellHeight}
                         frameCount={asset.frameCount}
+                        selectedFrameNumbers={asset.selectedFrameNumbers}
                         fps={asset.playbackFps}
                         animate={asset.animatedPreviewAvailable}
                         alt={asset.title}
@@ -1404,6 +1457,7 @@ export function LevelTesterShell({
                                 cellWidth={asset.cellWidth}
                                 cellHeight={asset.cellHeight}
                                 frameCount={asset.frameCount}
+                                selectedFrameNumbers={asset.selectedFrameNumbers}
                                 fps={asset.playbackFps}
                                 animate={asset.animatedPreviewAvailable}
                                 alt={asset.title}
@@ -1448,6 +1502,7 @@ export function LevelTesterShell({
                         cellWidth={selectedAsset.cellWidth}
                         cellHeight={selectedAsset.cellHeight}
                         frameCount={selectedAsset.frameCount}
+                        selectedFrameNumbers={selectedAsset.selectedFrameNumbers}
                         fps={selectedAsset.playbackFps}
                         animate={selectedAsset.animatedPreviewAvailable}
                         alt={selectedAsset.title}
