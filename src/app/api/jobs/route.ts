@@ -10,6 +10,7 @@ import {
 import { createInitialJob, enqueueJob } from "@/lib/job-runner";
 import { getSourceDir, listJobs, readJobManifest } from "@/lib/jobs";
 import { createJobSchema } from "@/lib/validators";
+import { getSafeImageUpload, InvalidImageUploadError } from "@/lib/uploads";
 
 export async function GET() {
   const jobs = await listJobs();
@@ -54,11 +55,11 @@ export async function POST(request: Request) {
     let sourceMimeType: string;
 
     if (hasUpload) {
-      const upload = image as File;
-      const extension = path.extname(upload.name) || ".png";
+      const upload = await getSafeImageUpload(image as File);
+      const extension = upload.extension;
       fileName = `source${extension.toLowerCase()}`;
-      sourceMimeType = upload.type || "image/png";
-      await writeFile(path.join(sourceDir, fileName), Buffer.from(await upload.arrayBuffer()));
+      sourceMimeType = upload.mimeType;
+      await writeFile(path.join(sourceDir, fileName), upload.content);
     } else {
       const sourceJob = await readJobManifest(parsed.data.retryFromJobId!);
       const extension = path.extname(sourceJob.sourceImagePath) || ".png";
@@ -83,7 +84,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to create job." },
-      { status: 500 },
+      { status: error instanceof InvalidImageUploadError ? 400 : 500 },
     );
   }
 }

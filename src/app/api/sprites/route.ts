@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listSprites, createUploadedSprite } from "@/lib/sprites";
 import { DEFAULT_SPRITE_CELL_HEIGHT, DEFAULT_SPRITE_CELL_WIDTH } from "@/lib/config";
+import { getSafeImageUpload, InvalidImageUploadError } from "@/lib/uploads";
 
 export async function GET() {
   const sprites = await listSprites();
@@ -16,6 +17,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "A sprite sheet image is required." }, { status: 400 });
     }
 
+    const upload = await getSafeImageUpload(image);
     const title = String(formData.get("title") || image.name).trim();
     const rawCellWidth = Number(formData.get("cellWidth") ?? DEFAULT_SPRITE_CELL_WIDTH);
     const rawCellHeight = Number(formData.get("cellHeight") ?? DEFAULT_SPRITE_CELL_HEIGHT);
@@ -30,9 +32,9 @@ export async function POST(request: Request) {
 
     const sprite = await createUploadedSprite({
       title: title || "Uploaded sprite",
-      fileName: image.name,
-      mimeType: image.type || "image/png",
-      content: Buffer.from(await image.arrayBuffer()),
+      fileName: `sprite${upload.extension}`,
+      mimeType: upload.mimeType,
+      content: upload.content,
       cellWidth: rawCellWidth,
       cellHeight: rawCellHeight,
     });
@@ -41,7 +43,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to upload sprite." },
-      { status: 500 },
+      { status: error instanceof InvalidImageUploadError ? 400 : 500 },
     );
   }
 }

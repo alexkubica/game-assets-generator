@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronUp, Copy, Import, LoaderCircle, Play, RefreshCw, RotateCcw, WandSparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { AssetInspectorDrawer } from "@/components/asset-inspector-drawer";
@@ -244,6 +245,7 @@ function ExpandablePrompt({
 }
 
 export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
+  const router = useRouter();
   const [jobs, setJobs] = useState(initialJobs);
   const [activeJobId, setActiveJobId] = useState(initialJobs[0]?.jobId ?? null);
   const [inspectedJobId, setInspectedJobId] = useState<string | null>(null);
@@ -457,7 +459,7 @@ export function AppShell({ initialJobs }: { initialJobs: JobManifest[] }) {
         ),
       );
       toast.success("Sprite imported to the library.");
-      window.location.assign(`/sprites?sprite=${encodeURIComponent(importData.sprite.spriteId)}`);
+      router.push(`/sprites?sprite=${encodeURIComponent(importData.sprite.spriteId)}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to import sprite.");
     } finally {

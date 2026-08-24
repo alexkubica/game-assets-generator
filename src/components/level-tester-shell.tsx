@@ -63,6 +63,11 @@ type SpriteTesterConfig = {
   states: Record<SpriteMotionState, SpriteTesterStateConfig>;
   assetOverrides: Record<string, TesterAssetOverride>;
 };
+type StoredSpriteTesterConfig = Omit<Partial<SpriteTesterConfig>, "default"> & {
+  default?: Partial<SpriteTesterDefaultConfig>;
+  scale?: number;
+  sourceOrientation?: SpriteOrientation;
+};
 type PendingChromaSave = {
   asset: TesterAssetOption;
   chromaKeyColor: string | null;
@@ -159,10 +164,7 @@ function buildTesterAssets(sprites: SpriteAsset[], jobs: JobManifest[]): TesterA
 
 function normalizeStoredConfigs(
   testerAssets: TesterAssetOption[],
-  rawConfig: Partial<SpriteTesterConfig> & {
-    scale?: number;
-    sourceOrientation?: SpriteOrientation;
-  },
+  rawConfig: StoredSpriteTesterConfig,
 ) {
   const defaultAssetKey = testerAssets[0]?.assetKey ?? "";
   const assetLookup = new Map(testerAssets.map((asset) => [asset.assetKey, asset]));
@@ -252,7 +254,9 @@ function buildInitialDraftConfig(
 ) {
   const initialAssets = buildTesterAssets(initialSprites, initialJobs);
   const assetLookup = new Map(initialAssets.map((asset) => [asset.assetKey, asset]));
-  const baseConfig = initialSetups[0] ? setupToConfig(initialSetups[0]) : {};
+  const baseConfig: StoredSpriteTesterConfig = initialSetups[0]
+    ? setupToConfig(initialSetups[0])
+    : {};
 
   if (!initialAssetKey) {
     return normalizeStoredConfigs(initialAssets, baseConfig);
